@@ -90,9 +90,8 @@ jobs:
       docker_layer_cache: true
       dockerfile_path: "./Dockerfile"
       platforms: "linux/amd64"
-    secrets:
-      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
+      aws_default_region: ${{ secrets.AWS_DEFAULT_REGION }}
 ```
 
 ---
