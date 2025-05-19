@@ -61,12 +61,7 @@ Flexible customization for various Docker build needs.
 | `platforms`         | Target platforms for Docker build                            | ❌       | `linux/amd64`     |
 | `runs_on`           | Runner image                                                 | ❌       | `ubuntu-latest`   |
 
-### Secrets
 
-| Name                 | Description               | Required |
-|----------------------|---------------------------|----------|
-| `AWS_ACCOUNT_ID`     | Your AWS account ID       | ✅       |
-| `AWS_DEFAULT_REGION` | AWS region to use         | ✅       |
 
 ---
 
@@ -91,7 +86,7 @@ jobs:
       dockerfile_path: "./Dockerfile"
       platforms: "linux/amd64"
       aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
-      aws_default_region: ${{ secrets.AWS_DEFAULT_REGION }}
+      aws_region: ${{ secrets.AWS_DEFAULT_REGION }}
 ```
 
 ---
