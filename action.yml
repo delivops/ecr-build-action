@@ -1,0 +1,122 @@
+name: "ECR Build and Push"
+description: "Builds and pushes Docker images to Amazon ECR"
+author: "delivops"
+branding:
+  icon: "package"
+  color: "blue"
+
+inputs:
+  image_name:
+    description: "Name of the Docker image to build and push"
+    required: true
+  tag:
+    description: "One or more tags to apply to the Docker image, separated by comma"
+    required: true
+  path:
+    description: "Path to the Dockerfile context"
+    required: false
+    default: "."
+  build_args:
+    description: "Comma-separated list of build arguments to pass to the Docker build"
+    required: false
+    default: ""
+  push:
+    description: "Whether to push the Docker image to ECR"
+    required: false
+    default: "true"
+  force_ecr_login:
+    description: "Whether to force a new login to ECR"
+    required: false
+    default: "false"
+  docker_layer_cache:
+    description: "Whether to use docker caching"
+    required: false
+    default: "true"
+  target:
+    description: "Sets the target stage to build"
+    required: false
+    default: ""
+  dockerfile_path:
+    description: "Path to the Dockerfile"
+    required: false
+    default: "Dockerfile"
+  platforms:
+    description: "List of target platforms for build"
+    required: false
+    default: "linux/amd64"
+  runs_on:
+    description: "The runner image to use (ignored here, used in caller workflow)"
+    required: false
+    default: "ubuntu-latest"
+  aws_account_id:
+    description: 'The AWS account ID'
+    required: true
+  aws_region:
+    description: 'The AWS region'
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      if: ${{ inputs.push == 'true' || inputs.force_ecr_login == 'true' }}
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: "arn:aws:iam::${{ inputs.aws_account_id }}:role/github_services"
+        aws-region: ${{ inputs.aws_region }}
+
+    - name: Login to Amazon ECR
+      if: ${{ inputs.push == 'true' || inputs.force_ecr_login == 'true' }}
+      id: login_ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Prepare tags
+      id: prepare_tags
+      shell: bash
+      run: |
+        TAGS="${{ inputs.tag }}"
+        REGISTRY="${{ steps.login_ecr.outputs.registry || 'local' }}"
+        PREFIX="${REGISTRY}/${{ inputs.image_name }}:"
+        IFS=',' read -ra ADDR <<< "$TAGS"
+        IMAGES=""
+        for i in "${ADDR[@]}"; do
+          if [ -z "$IMAGES" ]; then
+            IMAGES="$PREFIX$i"
+          else
+            IMAGES="$IMAGES,$PREFIX$i"
+          fi
+        done
+        echo "tags=$IMAGES" >> "$GITHUB_OUTPUT"
+
+    - name: Check if first tag exists
+      id: check-tags
+      shell: bash
+      run: |
+        REPO_NAME="${{ inputs.image_name }}"
+        IFS=',' read -r FIRST_TAG REST <<< "${{ inputs.tag }}"
+        TRIMMED_TAG=$(echo $FIRST_TAG | xargs)
+        TAG_EXISTS=true
+        if ! aws ecr describe-images --repository-name $REPO_NAME --image-ids imageTag=$TRIMMED_TAG >/dev/null 2>&1; then
+          TAG_EXISTS=false
+        fi
+        echo "tag_exists=$TAG_EXISTS" >> "$GITHUB_OUTPUT"
+
+    - name: Set up Docker Buildx
+      if: steps.check-tags.outputs.tag_exists == 'false'
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build and push Docker image
+      if: steps.check-tags.outputs.tag_exists == 'false'
+      uses: docker/build-push-action@v6.10.0
+      with:
+        context: ${{ inputs.path }}
+        target: ${{ inputs.target }}
+        push: ${{ inputs.push }}
+        tags: ${{ steps.prepare_tags.outputs.tags }}
+        build-args: ${{ inputs.build_args }}
+        file: ${{ inputs.dockerfile_path }}
+        platforms: ${{ inputs.platforms }}
+        cache-from: ${{ inputs.docker_layer_cache == 'true' && 'type=gha' || '' }}
+        cache-to: ${{ inputs.docker_layer_cache == 'true' && 'type=gha,mode=max' || '' }}
