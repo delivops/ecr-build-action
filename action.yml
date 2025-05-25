@@ -54,17 +54,18 @@ inputs:
   aws_region:
     description: 'The AWS region'
     required: true
+  aws_role:
+    description: 'The AWS IAM role to assume'
+    default: 'github_services'
+    required: false  
 runs:
   using: "composite"
   steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
     - name: Configure AWS credentials
       if: ${{ inputs.push == 'true' || inputs.force_ecr_login == 'true' }}
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: "arn:aws:iam::${{ inputs.aws_account_id }}:role/github_services"
+        role-to-assume: "arn:aws:iam::${{ inputs.aws_account_id }}:role/${{ inputs.aws_role}}"
         aws-region: ${{ inputs.aws_region }}
 
     - name: Login to Amazon ECR
@@ -102,6 +103,8 @@ runs:
           TAG_EXISTS=false
         fi
         echo "tag_exists=$TAG_EXISTS" >> "$GITHUB_OUTPUT"
+        echo "first_tag=$TRIMMED_TAG" >> "$GITHUB_OUTPUT"
+
 
     - name: Set up Docker Buildx
       if: steps.check-tags.outputs.tag_exists == 'false'
@@ -120,3 +123,32 @@ runs:
         platforms: ${{ inputs.platforms }}
         cache-from: ${{ inputs.docker_layer_cache == 'true' && 'type=gha' || '' }}
         cache-to: ${{ inputs.docker_layer_cache == 'true' && 'type=gha,mode=max' || '' }}
+
+    - name: Pull existing image, retag, and push
+      if: steps.check-tags.outputs.tag_exists == 'true' && inputs.push == 'true'
+      shell: bash
+      run: |
+        REGISTRY="${{ steps.login_ecr.outputs.registry }}"
+        REPO_NAME="${{ inputs.image_name }}"
+        FIRST_TAG="${{ steps.check-tags.outputs.first_tag }}"
+        
+        # Pull the existing image with the first tag
+        EXISTING_IMAGE="$REGISTRY/$REPO_NAME:$FIRST_TAG"
+        echo "Pulling existing image: $EXISTING_IMAGE"
+        docker pull $EXISTING_IMAGE
+        
+        # Parse all tags and retag the image
+        TAGS="${{ inputs.tag }}"
+        IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
+        
+        for tag in "${TAG_ARRAY[@]}"; do
+          TRIMMED_TAG=$(echo $tag | xargs)
+          NEW_IMAGE="$REGISTRY/$REPO_NAME:$TRIMMED_TAG"
+          echo "Tagging image as: $NEW_IMAGE"
+          docker tag $EXISTING_IMAGE $NEW_IMAGE
+          echo "Pushing: $NEW_IMAGE"
+          docker push $NEW_IMAGE
+        done
+        
+        echo "Successfully retagged and pushed all tags"
+

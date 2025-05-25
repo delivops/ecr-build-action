@@ -74,19 +74,25 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-push:
-    uses: your-org/ecr-build-push-action@v0.0.1
-    with:
-      image_name: "my-app"
-      tag: "latest,sha-${{ github.sha }}"
-      path: "./"
-      build_args: "ENV=production,VERSION=${{ github.sha }}"
-      push: true
-      docker_layer_cache: true
-      dockerfile_path: "./Dockerfile"
-      platforms: "linux/amd64"
-      aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
-      aws_region: ${{ secrets.AWS_DEFAULT_REGION }}
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: delivops/ecs-deploy-action@0.0.2
+        with:
+          image_name: "my-app"
+          tag: "latest,sha-${{ github.sha }}"
+          path: "./"
+          build_args: "ENV=production,VERSION=${{ github.sha }}"
+          push: true
+          docker_layer_cache: true
+          dockerfile_path: "./Dockerfile"
+          platforms: "linux/amd64"
+          aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
+          aws_region: ${{ secrets.AWS_DEFAULT_REGION }}
 ```
 
 ---
