@@ -24,6 +24,10 @@ inputs:
     description: "Whether to push the Docker image to ECR"
     required: false
     default: "true"
+  override:
+    description: "Whether to push the Docker image to ECR even if the tag exist"
+    required: false
+    default: "false"
   force_ecr_login:
     description: "Whether to force a new login to ECR"
     required: false
@@ -107,11 +111,11 @@ runs:
 
 
     - name: Set up Docker Buildx
-      if: steps.check-tags.outputs.tag_exists == 'false'
+      if: ${{ steps.check-tags.outputs.tag_exists == 'false' || inputs.override == 'true' }}
       uses: docker/setup-buildx-action@v3
 
     - name: Build and push Docker image
-      if: steps.check-tags.outputs.tag_exists == 'false'
+      if: ${{ steps.check-tags.outputs.tag_exists == 'false' || inputs.override == 'true' }}
       uses: docker/build-push-action@v6.10.0
       with:
         context: ${{ inputs.path }}
