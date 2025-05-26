@@ -129,7 +129,7 @@ runs:
         cache-to: ${{ inputs.docker_layer_cache == 'true' && 'type=gha,mode=max' || '' }}
 
     - name: Pull existing image, retag, and push
-      if: steps.check-tags.outputs.tag_exists == 'true' && inputs.push == 'true'
+      if: steps.check-tags.outputs.tag_exists == 'true' && inputs.push == 'true' && inputs.override == 'false'
       shell: bash
       run: |
         REGISTRY="${{ steps.login_ecr.outputs.registry }}"
