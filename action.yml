@@ -112,7 +112,7 @@ runs:
 
     - name: Build and push Docker image
       if: steps.check-tags.outputs.tag_exists == 'false'
-      uses: docker/build-push-action@v6.10.0
+      uses: docker/build-push-action@v6.18.0
       with:
         context: ${{ inputs.path }}
         target: ${{ inputs.target }}
