@@ -44,20 +44,25 @@ inputs:
     description: "List of target platforms for build"
     required: false
     default: "linux/amd64"
-  runs_on:
-    description: "The runner image to use (ignored here, used in caller workflow)"
-    required: false
-    default: "ubuntu-latest"
   aws_account_id:
-    description: 'The AWS account ID'
+    description: "The AWS account ID"
     required: true
   aws_region:
-    description: 'The AWS region'
+    description: "The AWS region"
     required: true
   aws_role:
-    description: 'The AWS IAM role to assume'
-    default: 'github_services'
-    required: false  
+    description: "The AWS IAM role to assume"
+    default: "github_services"
+    required: false
+  pull:
+    description: "Always attempt to pull referenced images to avoid stale bases"
+    required: false
+    default: "true"
+  no_cache:
+    description: "Do not use cache when building the image"
+    required: false
+    default: "false"
+
 runs:
   using: "composite"
   steps:
@@ -83,72 +88,42 @@ runs:
         IFS=',' read -ra ADDR <<< "$TAGS"
         IMAGES=""
         for i in "${ADDR[@]}"; do
+          i_trimmed="$(echo "$i" | xargs)"
           if [ -z "$IMAGES" ]; then
-            IMAGES="$PREFIX$i"
+            IMAGES="${PREFIX}${i_trimmed}"
           else
-            IMAGES="$IMAGES,$PREFIX$i"
+            IMAGES="${IMAGES},${PREFIX}${i_trimmed}"
           fi
         done
         echo "tags=$IMAGES" >> "$GITHUB_OUTPUT"
 
-    - name: Check if first tag exists
-      id: check-tags
+    - name: Ensure ECR repository exists
+      if: ${{ inputs.push == 'true' }}
       shell: bash
       run: |
-        REPO_NAME="${{ inputs.image_name }}"
-        IFS=',' read -r FIRST_TAG REST <<< "${{ inputs.tag }}"
-        TRIMMED_TAG=$(echo $FIRST_TAG | xargs)
-        TAG_EXISTS=true
-        if ! aws ecr describe-images --repository-name $REPO_NAME --image-ids imageTag=$TRIMMED_TAG >/dev/null 2>&1; then
-          TAG_EXISTS=false
-        fi
-        echo "tag_exists=$TAG_EXISTS" >> "$GITHUB_OUTPUT"
-        echo "first_tag=$TRIMMED_TAG" >> "$GITHUB_OUTPUT"
+        set -e
+        REPO="${{ inputs.image_name }}"
+        aws ecr describe-repositories --repository-names "$REPO" >/dev/null 2>&1 || \
+          aws ecr create-repository --repository-name "$REPO" >/dev/null
 
+    - name: Set up QEMU
+      if: contains(inputs.platforms, 'arm64') || contains(inputs.platforms, '386') || contains(inputs.platforms, 'arm/') || contains(inputs.platforms, 'ppc64le') || contains(inputs.platforms, 's390x')
+      uses: docker/setup-qemu-action@v3
 
     - name: Set up Docker Buildx
-      if: steps.check-tags.outputs.tag_exists == 'false'
       uses: docker/setup-buildx-action@v3
 
-    - name: Build and push Docker image
-      if: steps.check-tags.outputs.tag_exists == 'false'
+    - name: Build (and optionally push) Docker image
       uses: docker/build-push-action@v6.10.0
       with:
         context: ${{ inputs.path }}
         target: ${{ inputs.target }}
         push: ${{ inputs.push }}
+        pull: ${{ inputs.pull }}
+        no-cache: ${{ inputs.no_cache }}
         tags: ${{ steps.prepare_tags.outputs.tags }}
         build-args: ${{ inputs.build_args }}
         file: ${{ inputs.dockerfile_path }}
         platforms: ${{ inputs.platforms }}
         cache-from: ${{ inputs.docker_layer_cache == 'true' && 'type=gha' || '' }}
         cache-to: ${{ inputs.docker_layer_cache == 'true' && 'type=gha,mode=max' || '' }}
-
-    - name: Pull existing image, retag, and push
-      if: steps.check-tags.outputs.tag_exists == 'true' && inputs.push == 'true'
-      shell: bash
-      run: |
-        REGISTRY="${{ steps.login_ecr.outputs.registry }}"
-        REPO_NAME="${{ inputs.image_name }}"
-        FIRST_TAG="${{ steps.check-tags.outputs.first_tag }}"
-        
-        # Pull the existing image with the first tag
-        EXISTING_IMAGE="$REGISTRY/$REPO_NAME:$FIRST_TAG"
-        echo "Pulling existing image: $EXISTING_IMAGE"
-        docker pull $EXISTING_IMAGE
-        
-        # Parse all tags and retag the image
-        TAGS="${{ inputs.tag }}"
-        IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
-        
-        for tag in "${TAG_ARRAY[@]}"; do
-          TRIMMED_TAG=$(echo $tag | xargs)
-          NEW_IMAGE="$REGISTRY/$REPO_NAME:$TRIMMED_TAG"
-          echo "Tagging image as: $NEW_IMAGE"
-          docker tag $EXISTING_IMAGE $NEW_IMAGE
-          echo "Pushing: $NEW_IMAGE"
-          docker push $NEW_IMAGE
-        done
-        
-        echo "Successfully retagged and pushed all tags"
-
