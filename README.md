@@ -11,7 +11,6 @@ This GitHub Action automates:
 - Tagging images with one or multiple tags
 - Logging in to Amazon ECR
 - Optionally pushing images to ECR
-- Skipping builds if the first tag already exists in the repository
 
 ---
 
@@ -19,22 +18,18 @@ This GitHub Action automates:
 
 This GitHub Action runs the following steps:
 
-1. Checks out the source code.
-2. Optionally logs into AWS and Amazon ECR.
-3. Skips the build if the first tag already exists in ECR.
-4. Prepares tags and build arguments.
-5. Sets up Docker Buildx for multi-platform builds.
-6. Builds and optionally pushes the Docker image to ECR.
+1. Optionally logs into AWS and Amazon ECR.
+2. Ensures the target ECR repository exists.
+3. Prepares tags and build arguments.
+4. Sets up Docker Buildx (and QEMU if multi-arch).
+5. Builds and optionally pushes the Docker image to ECR.
 
 ---
 
 ## Features
 
 ✔️ **Multi-tag and Multi-platform Docker Builds**  
-Easily build images for `linux/amd64`, `linux/arm64`, and more, with multiple tags.
-
-✔️ **Tag Existence Check**  
-Skips unnecessary builds if the first tag already exists in the ECR repository.
+Build images for `linux/amd64`, `linux/arm64`, and more, with multiple tags.
 
 ✔️ **Docker Layer Caching**  
 Faster builds using GitHub Actions cache.
@@ -42,25 +37,31 @@ Faster builds using GitHub Actions cache.
 ✔️ **Build Args, Target Stage & Dockerfile Path Support**  
 Flexible customization for various Docker build needs.
 
+✔️ **`pull` and `no_cache` Controls**  
+- `pull`: always refresh base images to avoid stale builds  
+- `no_cache`: force rebuild without cache when needed  
+
 ---
 
 ## Inputs
 
-| Name                | Description                                                  | Required | Default           |
-|---------------------|--------------------------------------------------------------|----------|-------------------|
-| `image_name`        | Name of the Docker image to build and push                   | ✅       | —                 |
-| `tag`               | Comma-separated list of tags to apply                        | ✅       | —                 |
-| `path`              | Path to the Docker context                                   | ❌       | `.`               |
-| `build_args`        | Comma-separated list of build arguments                      | ❌       | `""`              |
-| `push`              | Whether to push the Docker image to ECR                      | ❌       | `true`            |
-| `force_ecr_login`   | Force a new login to ECR                                     | ❌       | `false`           |
-| `docker_layer_cache`| Use Docker layer caching                                     | ❌       | `true`            |
-| `target`            | Docker build target stage                                    | ❌       | `""`              |
-| `dockerfile_path`   | Path to the Dockerfile                                       | ❌       | `Dockerfile`      |
-| `platforms`         | Target platforms for Docker build                            | ❌       | `linux/amd64`     |
-| `runs_on`           | Runner image                                                 | ❌       | `ubuntu-latest`   |
-
-
+| Name                 | Description                                                  | Required | Default        |
+|----------------------|--------------------------------------------------------------|----------|----------------|
+| `image_name`         | Name of the Docker image to build and push                   | ✅       | —              |
+| `tag`                | Comma-separated list of tags to apply                        | ✅       | —              |
+| `path`               | Path to the Docker context                                   | ❌       | `.`            |
+| `build_args`         | Comma-separated list of build arguments                      | ❌       | `""`           |
+| `push`               | Whether to push the Docker image to ECR                      | ❌       | `true`         |
+| `force_ecr_login`    | Force a new login to ECR                                     | ❌       | `false`        |
+| `docker_layer_cache` | Use Docker layer caching                                     | ❌       | `true`         |
+| `target`             | Docker build target stage                                    | ❌       | `""`           |
+| `dockerfile_path`    | Path to the Dockerfile                                       | ❌       | `Dockerfile`   |
+| `platforms`          | Target platforms for Docker build                            | ❌       | `linux/amd64`  |
+| `aws_account_id`     | AWS account ID                                               | ✅       | —              |
+| `aws_region`         | AWS region                                                   | ✅       | —              |
+| `aws_role`           | IAM role to assume                                           | ❌       | `github_services` |
+| `pull`               | Always attempt to pull referenced images                     | ❌       | `true`         |
+| `no_cache`           | Do not use cache when building the image                     | ❌       | `false`        |
 
 ---
 
@@ -80,23 +81,15 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: delivops/ecs-deploy-action@0.0.2
+      - uses: delivops/ecr-build-push-action@v0.1.0
         with:
           image_name: "my-app"
           tag: "latest,sha-${{ github.sha }}"
-          path: "./"
           build_args: "ENV=production,VERSION=${{ github.sha }}"
-          push: true
-          docker_layer_cache: true
-          dockerfile_path: "./Dockerfile"
-          platforms: "linux/amd64"
           aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
           aws_region: ${{ secrets.AWS_DEFAULT_REGION }}
-```
-
----
 
 ## Notes
 
-- This action uses the `aws-actions/amazon-ecr-login` and `docker/build-push-action` internally.
-- Make sure the IAM role `github_services` has permission to interact with ECR.
+- This action uses `aws-actions/amazon-ecr-login` and `docker/build-push-action` internally.
+- Make sure the IAM role (default: `github_services`) has permission to interact with ECR.
