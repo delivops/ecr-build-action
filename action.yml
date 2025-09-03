@@ -68,7 +68,7 @@ runs:
   steps:
     - name: Configure AWS credentials
       if: ${{ inputs.push == 'true' || inputs.force_ecr_login == 'true' }}
-      uses: aws-actions/configure-aws-credentials@v4
+      uses: aws-actions/configure-aws-credentials@v5
       with:
         role-to-assume: "arn:aws:iam::${{ inputs.aws_account_id }}:role/${{ inputs.aws_role}}"
         aws-region: ${{ inputs.aws_region }}
