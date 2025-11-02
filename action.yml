@@ -32,6 +32,14 @@ inputs:
     description: "Whether to use docker caching"
     required: false
     default: "true"
+  enable_buildcache:
+    description: "Enable using an ECR registry build cache"
+    required: false
+    default: "false"
+  buildcache_tag_name:
+    description: "Tag to use when storing build cache layers"
+    required: false
+    default: "buildcache"
   target:
     description: "Sets the target stage to build"
     required: false
@@ -67,14 +75,14 @@ runs:
   using: "composite"
   steps:
     - name: Configure AWS credentials
-      if: ${{ inputs.push == 'true' || inputs.force_ecr_login == 'true' }}
+      if: ${{ inputs.push == 'true' || inputs.force_ecr_login == 'true' || inputs.enable_buildcache == 'true' }}
       uses: aws-actions/configure-aws-credentials@v5
       with:
         role-to-assume: "arn:aws:iam::${{ inputs.aws_account_id }}:role/${{ inputs.aws_role}}"
         aws-region: ${{ inputs.aws_region }}
 
     - name: Login to Amazon ECR
-      if: ${{ inputs.push == 'true' || inputs.force_ecr_login == 'true' }}
+      if: ${{ inputs.push == 'true' || inputs.force_ecr_login == 'true' || inputs.enable_buildcache == 'true' }}
       id: login_ecr
       uses: aws-actions/amazon-ecr-login@v2
 
@@ -98,7 +106,7 @@ runs:
         echo "tags=$IMAGES" >> "$GITHUB_OUTPUT"
 
     - name: Ensure ECR repository exists
-      if: ${{ inputs.push == 'true' }}
+      if: ${{ inputs.push == 'true' || inputs.enable_buildcache == 'true' }}
       shell: bash
       run: |
         set -e
@@ -113,6 +121,41 @@ runs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
+    - name: Prepare cache configuration
+      id: prepare_cache
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        cache_from=""
+        cache_to=""
+
+        if [ "${{ inputs.docker_layer_cache }}" = "true" ]; then
+          cache_from="type=gha"
+          cache_to="type=gha,mode=max"
+        fi
+
+        if [ "${{ inputs.enable_buildcache }}" = "true" ]; then
+          registry="${{ inputs.aws_account_id }}.dkr.ecr.${{ inputs.aws_region }}.amazonaws.com"
+          cache_from_registry="type=registry,ref=${registry}/${{ inputs.image_name }}:${{ inputs.buildcache_tag_name }}"
+          cache_to_registry="type=registry,ref=${registry}/${{ inputs.image_name }}:${{ inputs.buildcache_tag_name }},mode=max"
+
+          if [ -n "$cache_from" ]; then
+            cache_from="${cache_from}"$'\n'"${cache_from_registry}"
+          else
+            cache_from="$cache_from_registry"
+          fi
+
+          if [ -n "$cache_to" ]; then
+            cache_to="${cache_to}"$'\n'"${cache_to_registry}"
+          else
+            cache_to="$cache_to_registry"
+          fi
+        fi
+
+        printf 'cache_from<<EOF\n%s\nEOF\n' "$cache_from" >> "$GITHUB_OUTPUT"
+        printf 'cache_to<<EOF\n%s\nEOF\n' "$cache_to" >> "$GITHUB_OUTPUT"
+
     - name: Build (and optionally push) Docker image
       uses: docker/build-push-action@v6.18.0
       with:
@@ -125,5 +168,5 @@ runs:
         build-args: ${{ inputs.build_args }}
         file: ${{ inputs.dockerfile_path }}
         platforms: ${{ inputs.platforms }}
-        cache-from: ${{ inputs.docker_layer_cache == 'true' && 'type=gha' || '' }}
-        cache-to: ${{ inputs.docker_layer_cache == 'true' && 'type=gha,mode=max' || '' }}
+        cache-from: ${{ steps.prepare_cache.outputs.cache_from }}
+        cache-to: ${{ steps.prepare_cache.outputs.cache_to }}

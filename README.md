@@ -31,8 +31,11 @@ This GitHub Action runs the following steps:
 ✔️ **Multi-tag and Multi-platform Docker Builds**  
 Build images for `linux/amd64`, `linux/arm64`, and more, with multiple tags.
 
-✔️ **Docker Layer Caching**  
+✔️ **Docker Layer Caching**
 Faster builds using GitHub Actions cache.
+
+✔️ **ECR Build Cache Support**
+Push and reuse build layers stored alongside your image in Amazon ECR.
 
 ✔️ **Build Args, Target Stage & Dockerfile Path Support**  
 Flexible customization for various Docker build needs.
@@ -53,7 +56,9 @@ Flexible customization for various Docker build needs.
 | `build_args`         | Comma-separated list of build arguments                      | ❌       | `""`           |
 | `push`               | Whether to push the Docker image to ECR                      | ❌       | `true`         |
 | `force_ecr_login`    | Force a new login to ECR                                     | ❌       | `false`        |
-| `docker_layer_cache` | Use Docker layer caching                                     | ❌       | `true`         |
+| `docker_layer_cache` | Use Docker layer caching (GitHub Actions cache)              | ❌       | `true`         |
+| `enable_buildcache`  | Use an ECR registry cache for build layers                   | ❌       | `false`        |
+| `buildcache_tag_name`| Tag used when storing build cache layers in ECR              | ❌       | `buildcache`   |
 | `target`             | Docker build target stage                                    | ❌       | `""`           |
 | `dockerfile_path`    | Path to the Dockerfile                                       | ❌       | `Dockerfile`   |
 | `platforms`          | Target platforms for Docker build                            | ❌       | `linux/amd64`  |
@@ -86,6 +91,8 @@ jobs:
           image_name: "my-app"
           tag: "latest,sha-${{ github.sha }}"
           build_args: "ENV=production,VERSION=${{ github.sha }}"
+          enable_buildcache: "true"
+          buildcache_tag_name: "buildcache"
           aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
           aws_region: ${{ secrets.AWS_DEFAULT_REGION }}
 
@@ -93,3 +100,4 @@ jobs:
 
 - This action uses `aws-actions/amazon-ecr-login` and `docker/build-push-action` internally.
 - Make sure the IAM role (default: `github_services`) has permission to interact with ECR.
+- When using the ECR build cache, either enable `push` or set `force_ecr_login: true` so the workflow can authenticate with ECR.
