@@ -78,6 +78,22 @@ inputs:
     description: "DockerHub access token for pulling base images"
     required: false
     default: ""
+  scan_on_push:
+    description: "Enable vulnerability scanning enforcement after image push"
+    required: false
+    default: "false"
+  scan_severity_threshold:
+    description: "Fail build if vulnerabilities at or above this severity are found (CRITICAL, HIGH, MEDIUM, LOW, INFORMATIONAL)"
+    required: false
+    default: "CRITICAL"
+  scan_timeout:
+    description: "Maximum time in seconds to wait for scan results"
+    required: false
+    default: "300"
+  scan_fail_on_timeout:
+    description: "Whether to fail the action if scan times out"
+    required: false
+    default: "true"
 
 runs:
   using: "composite"
@@ -186,3 +202,167 @@ runs:
         cache-from: ${{ steps.prepare_cache.outputs.cache_from }}
         cache-to: ${{ steps.prepare_cache.outputs.cache_to }}
         provenance: false
+
+    - name: Check vulnerability scan results
+      if: ${{ inputs.scan_on_push == 'true' && inputs.push == 'true' }}
+      shell: bash
+      env:
+        INPUT_IMAGE_NAME: ${{ inputs.image_name }}
+        INPUT_REGION: ${{ inputs.aws_region }}
+        INPUT_THRESHOLD: ${{ inputs.scan_severity_threshold }}
+        INPUT_TIMEOUT: ${{ inputs.scan_timeout }}
+        INPUT_FAIL_ON_TIMEOUT: ${{ inputs.scan_fail_on_timeout }}
+        INPUT_TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+
+        REPO_NAME="$INPUT_IMAGE_NAME"
+        REGION="$INPUT_REGION"
+        THRESHOLD="$INPUT_THRESHOLD"
+        TIMEOUT="$INPUT_TIMEOUT"
+        FAIL_ON_TIMEOUT="$INPUT_FAIL_ON_TIMEOUT"
+
+        # Parse first tag from comma-separated list
+        PRIMARY_TAG=$(echo "$INPUT_TAG" | cut -d',' -f1 | xargs)
+
+        echo "::group::Vulnerability Scan Configuration"
+        echo "Repository: $REPO_NAME"
+        echo "Tag: $PRIMARY_TAG"
+        echo "Severity Threshold: $THRESHOLD"
+        echo "Timeout: ${TIMEOUT}s"
+        echo "::endgroup::"
+
+        # Check if scanOnPush is enabled on the repository
+        ECR_SCAN_ENABLED=$(aws ecr describe-repositories \
+          --repository-names "$REPO_NAME" \
+          --region "$REGION" \
+          --query 'repositories[0].imageScanningConfiguration.scanOnPush' \
+          --output text 2>/dev/null || echo "false")
+
+        # If not enabled, trigger manual scan
+        if [ "$ECR_SCAN_ENABLED" != "true" ] && [ "$ECR_SCAN_ENABLED" != "True" ]; then
+          echo "scanOnPush not enabled, triggering manual scan..."
+          aws ecr start-image-scan \
+            --repository-name "$REPO_NAME" \
+            --image-id imageTag="$PRIMARY_TAG" \
+            --region "$REGION" || {
+              echo "::warning::Failed to start image scan. Scan may already be in progress."
+            }
+        fi
+
+        # Poll for scan completion
+        POLL_INTERVAL=10
+        ELAPSED=0
+
+        echo "Waiting for scan to complete..."
+        SCAN_STATUS="PENDING"
+        while true; do
+          # Check timeout before polling
+          if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
+            if [ "$FAIL_ON_TIMEOUT" = "true" ]; then
+              echo "::error::Scan timed out after ${TIMEOUT}s"
+              exit 1
+            else
+              echo "::warning::Scan timed out after ${TIMEOUT}s, continuing anyway"
+              exit 0
+            fi
+          fi
+
+          SCAN_STATUS=$(aws ecr describe-image-scan-findings \
+            --repository-name "$REPO_NAME" \
+            --image-id imageTag="$PRIMARY_TAG" \
+            --region "$REGION" \
+            --query 'imageScanStatus.status' \
+            --output text 2>/dev/null || echo "PENDING")
+
+          case "$SCAN_STATUS" in
+            "COMPLETE")
+              echo "Scan completed."
+              break
+              ;;
+            "IN_PROGRESS"|"PENDING")
+              echo "Scan status: $SCAN_STATUS (${ELAPSED}s elapsed)"
+              sleep $POLL_INTERVAL
+              ELAPSED=$((ELAPSED + POLL_INTERVAL))
+              ;;
+            "FAILED")
+              echo "::error::ECR vulnerability scan failed"
+              exit 1
+              ;;
+            "UNSUPPORTED_IMAGE")
+              echo "::error::ECR basic scanning returned UNSUPPORTED_IMAGE for this image."
+              echo "::error::If your account uses Amazon Inspector V2 enhanced scanning, ECR basic scan findings are not available via this API."
+              echo "::error::Check Inspector V2 findings directly in the AWS console or via the Inspector API."
+              exit 1
+              ;;
+            *)
+              echo "Unknown scan status: $SCAN_STATUS"
+              sleep $POLL_INTERVAL
+              ELAPSED=$((ELAPSED + POLL_INTERVAL))
+              ;;
+          esac
+        done
+
+        # Fetch complete scan results
+        SCAN_FINDINGS=$(aws ecr describe-image-scan-findings \
+          --repository-name "$REPO_NAME" \
+          --image-id imageTag="$PRIMARY_TAG" \
+          --region "$REGION")
+
+        # Extract counts by severity using jq
+        CRITICAL=$(echo "$SCAN_FINDINGS" | jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0')
+        HIGH=$(echo "$SCAN_FINDINGS" | jq -r '.imageScanFindings.findingSeverityCounts.HIGH // 0')
+        MEDIUM=$(echo "$SCAN_FINDINGS" | jq -r '.imageScanFindings.findingSeverityCounts.MEDIUM // 0')
+        LOW=$(echo "$SCAN_FINDINGS" | jq -r '.imageScanFindings.findingSeverityCounts.LOW // 0')
+        INFORMATIONAL=$(echo "$SCAN_FINDINGS" | jq -r '.imageScanFindings.findingSeverityCounts.INFORMATIONAL // 0')
+
+        # Display summary
+        echo "::group::Vulnerability Scan Results"
+        echo "CRITICAL: $CRITICAL | HIGH: $HIGH | MEDIUM: $MEDIUM | LOW: $LOW | INFORMATIONAL: $INFORMATIONAL"
+        echo "::endgroup::"
+
+        # Add to GitHub Step Summary
+        {
+          echo "### 🔍 Vulnerability Scan Results"
+          echo ""
+          echo "| Severity | Count |"
+          echo "|----------|------:|"
+          echo "| 🔴 Critical | $CRITICAL |"
+          echo "| 🟠 High | $HIGH |"
+          echo "| 🟡 Medium | $MEDIUM |"
+          echo "| 🔵 Low | $LOW |"
+          echo "| ⚪ Informational | $INFORMATIONAL |"
+          echo ""
+          echo "**Threshold:** $THRESHOLD"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        # Calculate failing count based on threshold
+        case "$THRESHOLD" in
+          "CRITICAL")
+            FAILING_COUNT=$CRITICAL
+            ;;
+          "HIGH")
+            FAILING_COUNT=$((CRITICAL + HIGH))
+            ;;
+          "MEDIUM")
+            FAILING_COUNT=$((CRITICAL + HIGH + MEDIUM))
+            ;;
+          "LOW")
+            FAILING_COUNT=$((CRITICAL + HIGH + MEDIUM + LOW))
+            ;;
+          "INFORMATIONAL")
+            FAILING_COUNT=$((CRITICAL + HIGH + MEDIUM + LOW + INFORMATIONAL))
+            ;;
+          *)
+            echo "::warning::Unknown severity threshold: $THRESHOLD, defaulting to CRITICAL"
+            FAILING_COUNT=$CRITICAL
+            ;;
+        esac
+
+        # Fail if threshold breached
+        if [ "$FAILING_COUNT" -gt 0 ]; then
+          echo "::error::Found $FAILING_COUNT vulnerabilities at or above $THRESHOLD severity"
+          exit 1
+        fi
+
+        echo "✅ No vulnerabilities found at or above $THRESHOLD severity"
