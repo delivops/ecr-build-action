@@ -170,3 +170,4 @@ runs:
         platforms: ${{ inputs.platforms }}
         cache-from: ${{ steps.prepare_cache.outputs.cache_from }}
         cache-to: ${{ steps.prepare_cache.outputs.cache_to }}
+        provenance: false
