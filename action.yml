@@ -70,13 +70,21 @@ inputs:
     description: "Do not use cache when building the image"
     required: false
     default: "false"
+  dockerhub_username:
+    description: "DockerHub username for pulling base images"
+    required: false
+    default: ""
+  dockerhub_access_token:
+    description: "DockerHub access token for pulling base images"
+    required: false
+    default: ""
 
 runs:
   using: "composite"
   steps:
     - name: Configure AWS credentials
       if: ${{ inputs.push == 'true' || inputs.force_ecr_login == 'true' || inputs.enable_buildcache == 'true' }}
-      uses: aws-actions/configure-aws-credentials@v5
+      uses: aws-actions/configure-aws-credentials@v6
       with:
         role-to-assume: "arn:aws:iam::${{ inputs.aws_account_id }}:role/${{ inputs.aws_role}}"
         aws-region: ${{ inputs.aws_region }}
@@ -85,6 +93,13 @@ runs:
       if: ${{ inputs.push == 'true' || inputs.force_ecr_login == 'true' || inputs.enable_buildcache == 'true' }}
       id: login_ecr
       uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Login to DockerHub
+      if: ${{ inputs.dockerhub_username != '' && inputs.dockerhub_access_token != '' }}
+      uses: docker/login-action@v3
+      with:
+        username: ${{ inputs.dockerhub_username }}
+        password: ${{ inputs.dockerhub_access_token }}
 
     - name: Prepare tags
       id: prepare_tags
