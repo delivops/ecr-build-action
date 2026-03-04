@@ -131,7 +131,7 @@ runs:
 
     - name: Set up QEMU
       if: contains(inputs.platforms, 'arm64') || contains(inputs.platforms, '386') || contains(inputs.platforms, 'arm/') || contains(inputs.platforms, 'ppc64le') || contains(inputs.platforms, 's390x')
-      uses: docker/setup-qemu-action@v3
+      uses: docker/setup-qemu-action@v4
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
