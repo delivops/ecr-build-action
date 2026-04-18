@@ -70,6 +70,10 @@ Flexible customization for various Docker build needs.
 | `no_cache`           | Do not use cache when building the image                     | ❌       | `false`        |
 | `dockerhub_username` | DockerHub username for pulling base images                   | ❌       | `""`           |
 | `dockerhub_access_token` | DockerHub access token for pulling base images           | ❌       | `""`           |
+| `scan_on_push`       | Enable vulnerability scanning enforcement after image push   | ❌       | `false`        |
+| `scan_severity_threshold` | Fail if vulnerabilities at or above this severity (CRITICAL, HIGH, MEDIUM, LOW, INFORMATIONAL) | ❌ | `CRITICAL` |
+| `scan_timeout`       | Maximum time in seconds to wait for scan results             | ❌       | `300`          |
+| `scan_fail_on_timeout` | Whether to fail the action if scan times out               | ❌       | `true`         |
 
 ---
 
@@ -89,7 +93,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: delivops/ecr-build-push-action@v0.1.0
+      - uses: delivops/ecr-build-action@v0
         with:
           image_name: "my-app"
           tag: "latest,sha-${{ github.sha }}"
@@ -100,6 +104,50 @@ jobs:
           aws_region: ${{ secrets.AWS_DEFAULT_REGION }}
           dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub_access_token: ${{ secrets.DOCKERHUB_TOKEN }}
+```
+
+### With Vulnerability Scanning
+
+```yaml
+      - uses: delivops/ecr-build-action@v0
+        with:
+          image_name: "my-app"
+          tag: "latest"
+          scan_on_push: "true"
+          scan_severity_threshold: "HIGH"
+          aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
+          aws_region: ${{ secrets.AWS_DEFAULT_REGION }}
+```
+
+---
+
+## 🔒 Vulnerability Scanning
+
+When `scan_on_push` is enabled, the action will:
+1. Wait for ECR to complete the vulnerability scan after pushing
+2. Parse the scan findings by severity
+3. Fail the workflow if vulnerabilities meet or exceed the threshold
+4. Generate a summary table in the GitHub Actions UI
+
+**Severity levels (from highest to lowest):** CRITICAL → HIGH → MEDIUM → LOW → INFORMATIONAL
+
+Setting `scan_severity_threshold: "HIGH"` will fail if any CRITICAL or HIGH vulnerabilities are found.
+
+### Additional IAM Permissions for Scanning
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "ecr:DescribeRepositories",
+    "ecr:DescribeImageScanFindings",
+    "ecr:StartImageScan"
+  ],
+  "Resource": "*"
+}
+```
+
+---
 
 ## Notes
 
