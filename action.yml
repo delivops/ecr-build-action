@@ -188,7 +188,7 @@ runs:
         printf 'cache_to<<EOF\n%s\nEOF\n' "$cache_to" >> "$GITHUB_OUTPUT"
 
     - name: Build (and optionally push) Docker image
-      uses: docker/build-push-action@v6.19.2
+      uses: docker/build-push-action@v7.1.0
       with:
         context: ${{ inputs.path }}
         target: ${{ inputs.target }}
