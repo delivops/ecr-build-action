@@ -20,8 +20,10 @@ runs:
     - name: Resolve
       if: ${{ steps.build.outcome == 'failure' }}
       shell: bash
-      run: echo "PROBE: RESOLVE_RAN outcome=${{ steps.build.outcome }}"
+      run: |
+        echo "PROBE RESOLVE_RAN outcome=${{ steps.build.outcome }}"
 
     - name: Always
       shell: bash
-      run: echo "PROBE: reached end, outcome=${{ steps.build.outcome }} conclusion=${{ steps.build.conclusion }}"
+      run: |
+        echo "PROBE END outcome=${{ steps.build.outcome }} conclusion=${{ steps.build.conclusion }}"
