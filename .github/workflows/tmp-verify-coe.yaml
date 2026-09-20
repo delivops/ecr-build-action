@@ -1,0 +1,19 @@
+name: tmp verify coe
+on:
+  push:
+    branches: [work/05-ecr-build-skip-if-exists]
+jobs:
+  failing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/tmp-coe
+        with:
+          should_fail: "true"
+  passing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/tmp-coe
+        with:
+          should_fail: "false"
