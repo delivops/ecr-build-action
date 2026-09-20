@@ -24,6 +24,10 @@ inputs:
     description: "Whether to push the Docker image to ECR"
     required: false
     default: "true"
+  skip_if_exists:
+    description: "Skip the build and push entirely if the first tag already exists in ECR"
+    required: false
+    default: "false"
   force_ecr_login:
     description: "Whether to force a new login to ECR"
     required: false
@@ -95,6 +99,11 @@ inputs:
     required: false
     default: "true"
 
+outputs:
+  skipped:
+    description: "true when the tag already existed in ECR and nothing was built or pushed"
+    value: ${{ steps.check_image.outputs.exists }}
+
 runs:
   using: "composite"
   steps:
@@ -145,6 +154,29 @@ runs:
         aws ecr describe-repositories --repository-names "$REPO" >/dev/null 2>&1 || \
           aws ecr create-repository --repository-name "$REPO" >/dev/null
 
+    - name: Check if image tag already exists
+      id: check_image
+      if: ${{ inputs.push == 'true' && inputs.skip_if_exists == 'true' }}
+      shell: bash
+      env:
+        INPUT_IMAGE_NAME: ${{ inputs.image_name }}
+        INPUT_REGION: ${{ inputs.aws_region }}
+        INPUT_TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+
+        PRIMARY_TAG=$(echo "$INPUT_TAG" | cut -d',' -f1 | xargs)
+
+        if aws ecr describe-images \
+             --repository-name "$INPUT_IMAGE_NAME" \
+             --region "$INPUT_REGION" \
+             --image-ids imageTag="$PRIMARY_TAG" >/dev/null 2>&1; then
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::$INPUT_IMAGE_NAME:$PRIMARY_TAG already exists in ECR - skipping build and push"
+        else
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Set up QEMU
       if: contains(inputs.platforms, 'arm64') || contains(inputs.platforms, '386') || contains(inputs.platforms, 'arm/') || contains(inputs.platforms, 'ppc64le') || contains(inputs.platforms, 's390x')
       uses: docker/setup-qemu-action@v4
@@ -188,6 +220,9 @@ runs:
         printf 'cache_to<<EOF\n%s\nEOF\n' "$cache_to" >> "$GITHUB_OUTPUT"
 
     - name: Build (and optionally push) Docker image
+      id: build
+      if: ${{ steps.check_image.outputs.exists != 'true' }}
+      continue-on-error: ${{ inputs.push == 'true' && inputs.skip_if_exists == 'true' }}
       uses: docker/build-push-action@v7.1.0
       with:
         context: ${{ inputs.path }}
@@ -202,6 +237,32 @@ runs:
         cache-from: ${{ steps.prepare_cache.outputs.cache_from }}
         cache-to: ${{ steps.prepare_cache.outputs.cache_to }}
         provenance: false
+
+    # The build step above tolerates failure only when skip_if_exists is on, so that a
+    # push losing a race against a concurrent run for the same tag is not a hard failure.
+    # Anything else that made the build fail still fails the job here.
+    - name: Resolve build outcome
+      if: ${{ steps.build.outcome == 'failure' }}
+      shell: bash
+      env:
+        INPUT_IMAGE_NAME: ${{ inputs.image_name }}
+        INPUT_REGION: ${{ inputs.aws_region }}
+        INPUT_TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+
+        PRIMARY_TAG=$(echo "$INPUT_TAG" | cut -d',' -f1 | xargs)
+
+        if aws ecr describe-images \
+             --repository-name "$INPUT_IMAGE_NAME" \
+             --region "$INPUT_REGION" \
+             --image-ids imageTag="$PRIMARY_TAG" >/dev/null 2>&1; then
+          echo "::notice::Build or push failed, but $INPUT_IMAGE_NAME:$PRIMARY_TAG is now in ECR - a concurrent run pushed it first. Treating as success."
+          exit 0
+        fi
+
+        echo "::error::Build failed and $INPUT_IMAGE_NAME:$PRIMARY_TAG is not in ECR. See the 'Build (and optionally push) Docker image' step above for the underlying error."
+        exit 1
 
     - name: Check vulnerability scan results
       if: ${{ inputs.scan_on_push == 'true' && inputs.push == 'true' }}
