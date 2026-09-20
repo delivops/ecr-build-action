@@ -91,6 +91,10 @@ Flexible customization for various Docker build needs.
 
 ## 🚀 Usage
 
+Pin an exact release. There is no floating `v0` tag — each release is tagged `v0.x.y` only, so
+`@v0` does not resolve. The examples below use `v0.2.0`; check
+[Releases](https://github.com/delivops/ecr-build-action/releases) for the latest.
+
 ```yaml
 name: Build and Push Image
 
@@ -105,7 +109,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: delivops/ecr-build-action@v0
+      - uses: delivops/ecr-build-action@v0.2.0
         with:
           image_name: "my-app"
           tag: "latest,sha-${{ github.sha }}"
@@ -121,7 +125,7 @@ jobs:
 ### With Vulnerability Scanning
 
 ```yaml
-      - uses: delivops/ecr-build-action@v0
+      - uses: delivops/ecr-build-action@v0.2.0
         with:
           image_name: "my-app"
           tag: "latest"
@@ -144,7 +148,7 @@ present it skips both the build and the push, and reports `skipped: "true"`:
 
 ```yaml
       - id: build
-        uses: delivops/ecr-build-action@v0
+        uses: delivops/ecr-build-action@v0.2.0
         with:
           image_name: "my-app"
           tag: "sha-${{ github.sha }}"
